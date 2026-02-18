@@ -1,87 +1,104 @@
 import streamlit as st
 import requests
 import pandas as pd
-from datetime import date
+from datetime import datetime, time
+import pytz
 from io import BytesIO
 import zipfile
 
 # --- APP CONFIG ---
-st.set_page_config(page_title="BhavCopy Pro", page_icon="📈", layout="centered")
+st.set_page_config(page_title="BhavCopy Pro", page_icon="📈", layout="wide")
 
-st.title("📈 BhavCopy Pro")
-st.markdown("### NSE Equity Daily Archive Downloader")
+IST = pytz.timezone('Asia/Kolkata')
 
-# --- UI SETTINGS ---
+# --- 2026 NSE HOLIDAY DATA ---
+HOLIDAYS_2026 = {
+    "2026-01-15": "Maharashtra Municipal Elections",
+    "2026-01-26": "Republic Day",
+    "2026-03-03": "Holi",
+    "2026-03-26": "Shri Ram Navami",
+    "2026-03-31": "Shri Mahavir Jayanti",
+    "2026-04-03": "Good Friday",
+    "2026-04-14": "Dr. Ambedkar Jayanti",
+    "2026-05-01": "Maharashtra Day",
+    "2026-05-28": "Bakri Id",
+    "2026-06-26": "Muharram",
+    "2026-09-14": "Ganesh Chaturthi",
+    "2026-10-02": "Mahatma Gandhi Jayanti",
+    "2026-10-20": "Dussehra",
+    "2026-11-10": "Diwali-Balipratipada",
+    "2026-11-24": "Guru Nanak Jayanti",
+    "2026-12-25": "Christmas"
+}
+
+def get_now_ist():
+    return datetime.now(IST)
+
+# --- SIDEBAR ---
 with st.sidebar:
-    st.header("Settings")
+    st.title("⚙️ Settings")
+    now_ist = get_now_ist()
+    today = now_ist.date()
     
-    # Automatically set to the current date when the user opens the app
-    today = date.today()
+    start_date = st.date_input("From Date", value=today)
+    end_date = st.date_input("To Date", value=today)
     
-    start_date = st.date_input("Start Date", value=today)
-    end_date = st.date_input("End Date", value=today)
-    
-    st.info(f"Today is: {today.strftime('%A, %d %b %Y')}")
-    st.caption("Note: NSE files are typically available after 6:00 PM IST.")
+    st.divider()
+    st.markdown("### 🗓️ 2026 Market Holidays")
+    holiday_df = pd.DataFrame(list(HOLIDAYS_2026.items()), columns=["Date", "Occasion"])
+    st.dataframe(holiday_df, hide_index=True, use_container_width=True)
 
-# NSE Connection Headers
+# --- MAIN UI ---
+st.title("📈 BhavCopy Pro")
+st.info(f"**Current IST:** {now_ist.strftime('%d %b %Y, %H:%M:%S')}")
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Referer": "https://www.nseindia.com/"
 }
 
-def fetch_bhavcopy(date_obj):
-    # Formats date to YYYYMMDD for the URL
-    date_str = date_obj.strftime("%Y%m%d")
-    url = f"https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{date_str}_F_0000.csv.zip"
+def fetch_data(date_obj):
+    ds = date_obj.strftime("%Y%m%d")
+    url = f"https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{ds}_F_0000.csv.zip"
     try:
-        response = requests.get(url, headers=HEADERS, timeout=10)
-        if response.status_code == 200:
-            return response.content
+        r = requests.get(url, headers=HEADERS, timeout=5)
+        return r.content if r.status_code == 200 else None
     except:
         return None
-    return None
 
-# --- EXECUTION ---
-if st.button("🚀 Download BhavCopy Range"):
-    if start_date > end_date:
-        st.error("Error: Start date cannot be after end date.")
-    elif end_date > today:
-        st.warning("Future dates are not available. Please select today or a past date.")
-    else:
-        # Create a range of dates
-        dates = pd.date_range(start_date, end_date)
-        zip_buffer = BytesIO()
-        count = 0
+if st.button("🚀 Download Selected Range"):
+    dates = pd.date_range(start_date, end_date)
+    zip_buffer = BytesIO()
+    files_found = 0
+    
+    for d in dates:
+        d_str = d.strftime("%Y-%m-%d")
+        d_date = d.date()
         
-        progress_text = st.empty()
-        progress_bar = st.progress(0)
-        
-        with zipfile.ZipFile(zip_buffer, "w") as master_zip:
-            for i, d in enumerate(dates):
-                # Skip weekends (Saturday=5, Sunday=6)
-                if d.weekday() >= 5:
-                    continue
-                
-                progress_text.text(f"Fetching: {d.strftime('%Y-%m-%d')}...")
-                content = fetch_bhavcopy(d)
-                
-                if content:
-                    master_zip.writestr(f"BhavCopy_{d.strftime('%Y%m%d')}.zip", content)
-                    count += 1
-                
-                # Update progress
-                progress_bar.progress((i + 1) / len(dates))
-
-        progress_text.empty()
-
-        if count > 0:
-            st.success(f"Success! Collected {count} files.")
-            st.download_button(
-                label=f"📥 Download {count} Reports (ZIP)",
-                data=zip_buffer.getvalue(),
-                file_name=f"BhavCopy_Pro_{start_date}_to_{end_date}.zip",
-                mime="application/zip"
-            )
+        # Check Weekends
+        if d_date.weekday() >= 5:
+            st.warning(f"Weekend: {d_str} (Market Closed)")
+            continue
+            
+        # Check Holidays
+        if d_str in HOLIDAYS_2026:
+            st.error(f"Holiday: {d_str} ({HOLIDAYS_2026[d_str]})")
+            continue
+            
+        # Fetch File
+        content = fetch_data(d_date)
+        if content:
+            with zipfile.ZipFile(zip_buffer, "a") as z:
+                z.writestr(f"BhavCopy_{d_date.strftime('%Y%m%d')}.zip", content)
+            files_found += 1
         else:
-            st.error("No files found. Check if the market was closed or if the report hasn't been uploaded yet.")
+            # Availability logic for today
+            expected = IST.localize(datetime.combine(d_date, time(18, 30)))
+            if d_date == today and now_ist < expected:
+                st.info(f"⏳ {d_str}: Report expected at 06:30 PM IST.")
+            else:
+                st.error(f"❌ {d_str}: Data not available on NSE servers.")
+
+    if files_found > 0:
+        st.success(f"Successfully bundled {files_found} reports!")
+        st.download_button("📥 Download ZIP", zip_buffer.getvalue(), f"BhavCopy_Pro_Export.zip")
