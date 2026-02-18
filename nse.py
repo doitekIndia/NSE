@@ -1,95 +1,67 @@
 import streamlit as st
 import requests
 import pandas as pd
-from datetime import timedelta
 from io import BytesIO
 import zipfile
 
-# App Configuration
-st.set_page_config(page_title="NSE Multi-Date Downloader", page_icon="📅")
+# --- APP CONFIG ---
+st.set_page_config(page_title="BhavCopy Pro", page_icon="📈", layout="centered")
 
-st.title("📈 NSE BhavCopy Range Downloader")
-st.markdown("Select a date range to download multiple BhavCopy files at once.")
+st.title("📈 BhavCopy Pro")
+st.markdown("### NSE Equity Daily Archive Downloader")
 
-# --- SIDEBAR SETTINGS ---
-st.sidebar.header("Download Settings")
-start_date = st.sidebar.date_input("Start Date", value=pd.to_datetime("2025-07-01"))
-end_date = st.sidebar.date_input("End Date", value=pd.to_datetime("2025-07-05"))
+# --- UI SETTINGS ---
+with st.sidebar:
+    st.header("Settings")
+    start_date = st.date_input("Start Date", value=pd.to_datetime("2025-07-02"))
+    end_date = st.date_input("End Date", value=pd.to_datetime("2025-07-02"))
+    st.info("Note: NSE files are usually available after 6:00 PM IST on trading days.")
 
-# NSE Header Configuration
+# NSE Connection Headers
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Referer": "https://www.nseindia.com/all-reports"
+    "Referer": "https://www.nseindia.com/"
 }
 
-def get_url(date_obj):
-    """Constructs the NSE URL for a specific date."""
+def fetch_bhavcopy(date_obj):
     date_str = date_obj.strftime("%Y%m%d")
-    return f"https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{date_str}_F_0000.csv.zip"
-
-def download_file(url):
-    """Attempts to download the file from NSE."""
+    url = f"https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{date_str}_F_0000.csv.zip"
     try:
         response = requests.get(url, headers=HEADERS, timeout=10)
         if response.status_code == 200:
             return response.content
-        return None
     except:
         return None
+    return None
 
-# --- MAIN LOGIC ---
-if st.button("Download All Files in Range"):
+# --- EXECUTION ---
+if st.button("Download BhavCopy Range"):
     if start_date > end_date:
-        st.error("Error: Start date must be before end date.")
+        st.error("Error: Start date cannot be after end date.")
     else:
-        # Generate list of dates
-        date_list = pd.date_range(start=start_date, end=end_date).tolist()
-        
-        # We will store successful downloads in an in-memory ZIP
+        dates = pd.date_range(start_date, end_date)
         zip_buffer = BytesIO()
-        found_files = 0
+        count = 0
         
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED) as master_zip:
-            for i, current_date in enumerate(date_list):
-                # Skip weekends
-                if current_date.weekday() >= 5:
-                    continue
+        progress = st.progress(0)
+        
+        with zipfile.ZipFile(zip_buffer, "w") as master_zip:
+            for i, d in enumerate(dates):
+                if d.weekday() >= 5: continue # Skip weekends
                 
-                url = get_url(current_date)
-                status_text.text(f"Checking {current_date.strftime('%d-%b-%Y')}...")
-                
-                content = download_file(url)
+                content = fetch_bhavcopy(d)
                 if content:
-                    # Save the individual zip into our master zip
-                    master_zip.writestr(f"BhavCopy_{current_date.strftime('%Y%m%d')}.zip", content)
-                    found_files += 1
-                
-                # Update progress
-                progress = (i + 1) / len(date_list)
-                progress_bar.progress(progress)
+                    master_zip.writestr(f"BhavCopy_{d.strftime('%Y%m%d')}.zip", content)
+                    count += 1
+                progress.progress((i + 1) / len(dates))
 
-        if found_files > 0:
-            st.success(f"Done! Found {found_files} files.")
-            zip_buffer.seek(0)
-            
+        if count > 0:
+            st.success(f"Successfully retrieved {count} files!")
             st.download_button(
-                label=f"💾 Download Combined ZIP ({found_files} files)",
-                data=zip_buffer,
-                file_name=f"NSE_BhavCopies_{start_date}_to_{end_date}.zip",
+                label="📥 Save ZIP to Computer",
+                data=zip_buffer.getvalue(),
+                file_name=f"BhavCopy_Pro_Export.zip",
                 mime="application/zip"
             )
         else:
-            st.warning("No files found for the selected range. Note: NSE does not publish files on weekends or holidays.")
-
----
-
-### Key Features of this Version:
-1.  **Date Range Picker**: Located in the sidebar for a cleaner UI.
-2.  **Weekend Skipping**: Automatically ignores Saturdays and Sundays to speed up the process.
-3.  **Master ZIP Creation**: Instead of downloading files one-by-one, it bundles all found BhavCopies into a single `.zip` file for you to download with one click.
-4.  **Progress Indicators**: Shows you exactly which date the script is currently processing.
-
-**Would you like me to add a feature that combines all the CSVs into a single Excel file instead of a ZIP?**
+            st.warning("No files found for the selected dates. Market might have been closed.")
