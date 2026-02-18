@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import pandas as pd
+from datetime import date
 from io import BytesIO
 import zipfile
 
@@ -13,9 +14,15 @@ st.markdown("### NSE Equity Daily Archive Downloader")
 # --- UI SETTINGS ---
 with st.sidebar:
     st.header("Settings")
-    start_date = st.date_input("Start Date", value=pd.to_datetime("2025-07-02"))
-    end_date = st.date_input("End Date", value=pd.to_datetime("2025-07-02"))
-    st.info("Note: NSE files are usually available after 6:00 PM IST on trading days.")
+    
+    # Automatically set to the current date when the user opens the app
+    today = date.today()
+    
+    start_date = st.date_input("Start Date", value=today)
+    end_date = st.date_input("End Date", value=today)
+    
+    st.info(f"Today is: {today.strftime('%A, %d %b %Y')}")
+    st.caption("Note: NSE files are typically available after 6:00 PM IST.")
 
 # NSE Connection Headers
 HEADERS = {
@@ -24,6 +31,7 @@ HEADERS = {
 }
 
 def fetch_bhavcopy(date_obj):
+    # Formats date to YYYYMMDD for the URL
     date_str = date_obj.strftime("%Y%m%d")
     url = f"https://nsearchives.nseindia.com/content/cm/BhavCopy_NSE_CM_0_0_0_{date_str}_F_0000.csv.zip"
     try:
@@ -35,33 +43,45 @@ def fetch_bhavcopy(date_obj):
     return None
 
 # --- EXECUTION ---
-if st.button("Download BhavCopy Range"):
+if st.button("🚀 Download BhavCopy Range"):
     if start_date > end_date:
         st.error("Error: Start date cannot be after end date.")
+    elif end_date > today:
+        st.warning("Future dates are not available. Please select today or a past date.")
     else:
+        # Create a range of dates
         dates = pd.date_range(start_date, end_date)
         zip_buffer = BytesIO()
         count = 0
         
-        progress = st.progress(0)
+        progress_text = st.empty()
+        progress_bar = st.progress(0)
         
         with zipfile.ZipFile(zip_buffer, "w") as master_zip:
             for i, d in enumerate(dates):
-                if d.weekday() >= 5: continue # Skip weekends
+                # Skip weekends (Saturday=5, Sunday=6)
+                if d.weekday() >= 5:
+                    continue
                 
+                progress_text.text(f"Fetching: {d.strftime('%Y-%m-%d')}...")
                 content = fetch_bhavcopy(d)
+                
                 if content:
                     master_zip.writestr(f"BhavCopy_{d.strftime('%Y%m%d')}.zip", content)
                     count += 1
-                progress.progress((i + 1) / len(dates))
+                
+                # Update progress
+                progress_bar.progress((i + 1) / len(dates))
+
+        progress_text.empty()
 
         if count > 0:
-            st.success(f"Successfully retrieved {count} files!")
+            st.success(f"Success! Collected {count} files.")
             st.download_button(
-                label="📥 Save ZIP to Computer",
+                label=f"📥 Download {count} Reports (ZIP)",
                 data=zip_buffer.getvalue(),
-                file_name=f"BhavCopy_Pro_Export.zip",
+                file_name=f"BhavCopy_Pro_{start_date}_to_{end_date}.zip",
                 mime="application/zip"
             )
         else:
-            st.warning("No files found for the selected dates. Market might have been closed.")
+            st.error("No files found. Check if the market was closed or if the report hasn't been uploaded yet.")
